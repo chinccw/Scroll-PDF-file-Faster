@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>PDF Viewer with Scroll Speed & Drag-and-Drop</title>
+<style>
+  body {
+    margin: 0;
+    background-color: #222;
+    color: white;
+    font-family: Arial, sans-serif;
+    overflow: hidden;
+  }
+  #toolbar {
+    background-color: #333;
+    padding: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 40px;
+  }
+  input, select, button {
+    padding: 4px;
+    font-size: 14px;
+  }
+  #viewerContainer {
+    position: absolute;
+    top: 40px;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    overflow: auto;
+    background-color: #111;
+  }
+  canvas {
+    display: block;
+    margin: auto;
+    background-color: #444;
+  }
+  /* Drag overlay */
+  #dropOverlay {
+    position: absolute;
+    top: 40px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    border: 3px dashed #aaa;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 20px;
+    transition: opacity 0.3s ease;
+    z-index: 1000;
+    pointer-events: none;
+  }
+  #dropOverlay img {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 10px;
+  }
+  #dropOverlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <input type="file" id="fileInput" accept="application/pdf" />
+  <label for="scrollSpeed">Scroll Speed:</label>
+  <select id="scrollSpeed">
+    <option value="1">1</option>
+    <option value="3">3</option>
+    <option value="5" selected>5</option>
+  </select>
+  <button id="zoomIn">Zoom In</button>
+  <button id="zoomOut">Zoom Out</button>
+</div>
+
+<div id="viewerContainer"></div>
+
+<div id="dropOverlay" class="hidden">
+  <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAMAAABg3Am1AAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAABaVBMVEUAAAD///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////8Aq6f8AAAAQXRSTlMAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCOUpLVFZXWGNnaG9wdnqAgYKHjY6QkaWmp6ipqqusra6vsbO1tba4ury8vr/AwcLDxMXGx8nKztDT2Nna3N7h4uTm6Ozt8fLz9ff5+vr7/P3+Q/gxAAABmElEQVRIx+2T53aCMBiGGQVRVZVgRQsXFFRUUFAVBYVqFVW1/v//nMiEQjcw5P8ae1+80Z0gG9p7Zop1YJEtWQh2q1pHnZoq5BQW3WdOIQYfQlYAXtjchEiWkLG0tS2h+jw8keicCYnSHVEonPhvXDEy8BrBpwlLJj2cY3GcOIRlbRccL14F+6K9ifpmg3EuHJDlB7prh1Ob0mf9OQdJZaWNOItx4XsfLejSMrTScU/jyG/7q19ix9f7Z7t7CRkZXZRvDaH9df+jZ2FR5sL1J2n1Hn2RDFIt+8J4MClz0S1z4AI2RGm2GJWB1EGpWHEFijhhrlgmoGdROFWPecIQwkZgxCjk9BVpg7kGOJZgwp1IcgRFFRAAE6FDNL0AA05jLhdmJjCEuwDswNUmjsGHBjDw1xeujnORxxGl+eeuFnkK6nO1d0utMv9hmiy4tcTTUojKP/x3nqAZQON/AOvZbp0tW9kwJAAAAAElFTkSuQmCC" alt="PDF icon" />
+  Drag and drop your PDF file here
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.14.305/pdf.min.js"></script>
+<script>
+  const fileInput = document.getElementById('fileInput');
+  const scrollSpeedSelect = document.getElementById('scrollSpeed');
+  const zoomInBtn = document.getElementById('zoomIn');
+  const zoomOutBtn = document.getElementById('zoomOut');
+  const viewerContainer = document.getElementById('viewerContainer');
+  const dropOverlay = document.getElementById('dropOverlay');
+
+  let pdfDoc = null;
+  let scale = 1.3; // default zoom 130%
+  let scrollSpeed = parseInt(scrollSpeedSelect.value);
+
+  scrollSpeedSelect.addEventListener('change', () => {
+    scrollSpeed = parseInt(scrollSpeedSelect.value);
+  });
+
+  viewerContainer.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    viewerContainer.scrollTop += e.deltaY * scrollSpeed;
+  }, { passive: false });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') viewerContainer.scrollTop += 40 * scrollSpeed;
+    if (e.key === 'ArrowUp') viewerContainer.scrollTop -= 40 * scrollSpeed;
+  });
+
+  zoomInBtn.addEventListener('click', () => {
+    scale += 0.15;
+    renderPDF();
+  });
+
+  zoomOutBtn.addEventListener('click', () => {
+    scale = Math.max(0.2, scale - 0.15);
+    renderPDF();
+  });
+
+  async function renderPDF() {
+    if (!pdfDoc) return;
+
+    // We'll create new offscreen canvases, render all pages there,
+    // and when done, swap them into the viewer container all at once
+
+    const newCanvases = [];
+
+    for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+      const page = await pdfDoc.getPage(pageNum);
+      const viewport = page.getViewport({ scale });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      canvas.style.backgroundColor = '#444';
+
+      const ctx = canvas.getContext('2d');
+
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      newCanvases.push(canvas);
+    }
+
+    // Swap old canvases with new canvases atomically
+    viewerContainer.innerHTML = '';
+    newCanvases.forEach(c => viewerContainer.appendChild(c));
+  }
+
+  function loadPDF(file) {
+    const fileReader = new FileReader();
+    fileReader.onload = function() {
+      const typedarray = new Uint8Array(this.result);
+      pdfjsLib.getDocument(typedarray).promise.then(pdf => {
+        pdfDoc = pdf;
+        scale = 1.7;
+        // Don't clear here, because renderPDF clears after render done
+        renderPDF();
+        hideDropOverlay();
+      });
+    };
+    fileReader.readAsArrayBuffer(file);
+  }
+
+  fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length > 0) {
+      loadPDF(e.target.files[0]);
+    }
+  });
+
+  // Drag & Drop events
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    showDropOverlay();
+  });
+
+  document.addEventListener('dragleave', (e) => {
+    if (e.target === document || e.target === viewerContainer) hideDropOverlay();
+  });
+
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    hideDropOverlay();
+    if (e.dataTransfer.files.length > 0 && e.dataTransfer.files[0].type === 'application/pdf') {
+      loadPDF(e.dataTransfer.files[0]);
+    }
+  });
+
+  function showDropOverlay() {
+    dropOverlay.classList.remove('hidden');
+  }
+  function hideDropOverlay() {
+    dropOverlay.classList.add('hidden');
+  }
+</script>
+
+</body>
+</html>
